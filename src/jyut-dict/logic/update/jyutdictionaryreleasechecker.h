@@ -4,9 +4,11 @@
 #include "logic/update/iupdatechecker.h"
 
 #include <QObject>
-#include <QtNetwork>
 
 #include <string>
+
+class QNetworkAccessManager;
+class QNetworkReply;
 
 // The JyutDictionaryReleaseChecker checks the Jyut Dictionary website
 // for updates to the application
@@ -35,10 +37,7 @@ public slots:
     void parseReply(QNetworkReply *request);
 
 signals:
-    void foundUpdate(bool updateAvailable,
-                     std::string versionNumber,
-                     std::string url,
-                     std::string description) override;
+    void foundUpdate(const IUpdateChecker::UpdateVariant &v) override;
 };
 
 #endif // JYUTDICTIONARYRELEASECHECKER_H

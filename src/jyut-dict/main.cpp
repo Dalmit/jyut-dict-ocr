@@ -1,9 +1,16 @@
-#include "windows/mainwindow.h"
-
+#include "logic/database/sqldatabaseutils.h"
+#include "logic/entry/entrycharactersoptions.h"
+#include "logic/entry/entryphoneticoptions.h"
+#include "logic/entry/entryspeaker.h"
+#include "logic/handwriting/handwritingwrapper.h"
+#include "logic/search/searchparameters.h"
 #include "logic/settings/settings.h"
+#include "windows/mainwindow.h"
+#include "windows/transcriptionwindow.h"
 
 #include <QApplication>
 #include <QSysInfo>
+#include <QThreadPool>
 
 #if defined(Q_OS_WIN)
 #include <Windows.h>
@@ -39,8 +46,8 @@ int main(int argc, char *argv[])
 #ifndef Q_OS_LINUX
     qRegisterMetaType<TranscriptionLanguage>("TranscriptionLanguage");
 #endif
-    qRegisterMetaType<searchTermHistoryItem>("searchTermHistoryItem");
-    qRegisterMetaType<conflictingDictionaryMetadata>(
+    qRegisterMetaType<SearchTermHistoryItem>("SearchTermHistoryItem");
+    qRegisterMetaType<conflictingSourceMetadata>(
         "conflictingDictionaryNamesMetadata");
     qRegisterMetaType<Settings::InterfaceSize>();
     qRegisterMetaType<TextToSpeech::SpeakerBackend>();

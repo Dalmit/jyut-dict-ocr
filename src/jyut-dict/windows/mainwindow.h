@@ -1,33 +1,45 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
-#include "components/favouritewindow/favouritesplitter.h"
-#include "components/mainwindow/mainsplitter.h"
-#include "components/mainwindow/maintoolbar.h"
-#include "logic/database/sqldatabasemanager.h"
-#include "logic/database/sqldatabaseutils.h"
-#include "logic/database/sqluserdatautils.h"
 #include "logic/database/sqluserhistoryutils.h"
-#include "logic/search/sqlsearch.h"
-#include "logic/update/jyutdictionaryreleasechecker.h"
-#include "windows/aboutwindow.h"
-#include "windows/historywindow.h"
-#include "windows/settingswindow.h"
-#include "windows/welcomewindow.h"
+#include "logic/update/iupdatechecker.h"
 
-#include <QAction>
-#include <QEvent>
 #include <QMainWindow>
-#include <QMenu>
-#include <QMenuBar>
-#include <QProgressDialog>
-#include <QTranslator>
-#include <QWidget>
+#include <QPointer>
 
+#include <deque>
 #include <memory>
+#include <optional>
+#include <string>
 
 // As its name suggests, is the main window of the application
 // Contains a toolbar (for searching), and splitter (for results/detail)
+
+class AboutWindow;
+class Entry;
+class FavouriteSplitter;
+class HistoryWindow;
+class JyutDictionaryReleaseChecker;
+class MainSplitter;
+class MainToolBar;
+class SettingsWindow;
+class SourceUpdateWindow;
+class SourceReleaseChecker;
+class SQLDatabaseManager;
+class SQLDatabaseUtils;
+class SQLSearch;
+class SQLUserHistoryUtils;
+class SQLUserDataUtils;
+class UpdateAvailableWindow;
+class WelcomeWindow;
+
+class QAction;
+class QEvent;
+class QMenu;
+class QMenuBar;
+class QProgressDialog;
+class QSettings;
+class QWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -40,6 +52,7 @@ public:
 
 private:
     JyutDictionaryReleaseChecker *_checker;
+    SourceReleaseChecker *_sourceChecker;
 
     MainToolBar *_mainToolBar;
     MainSplitter *_mainSplitter;
@@ -91,14 +104,18 @@ private:
 
     QAction *_helpAction;
     QAction *_updateAction;
+    QAction *_updateSourcesAction;
 
-    QPointer<AboutWindow> _aboutWindow;
-    QPointer<SettingsWindow> _settingsWindow;
-    QPointer<HistoryWindow> _historyWindow;
-    QPointer<FavouriteSplitter> _favouritesWindow;
-    QPointer<WelcomeWindow> _welcomeWindow;
+    QPointer<AboutWindow> _aboutWindow = nullptr;
+    QPointer<SettingsWindow> _settingsWindow = nullptr;
+    QPointer<HistoryWindow> _historyWindow = nullptr;
+    QPointer<FavouriteSplitter> _favouritesWindow = nullptr;
+    QPointer<WelcomeWindow> _welcomeWindow = nullptr;
 
-    QProgressDialog *_updateDialog = nullptr;
+    QPointer<UpdateAvailableWindow> _updateAvailableWindow = nullptr;
+    QPointer<SourceUpdateWindow> _sourceUpdateWindow = nullptr;
+
+    QProgressDialog *_updateCheckProgressDialog = nullptr;
     QProgressDialog *_databaseMigrationDialog = nullptr;
 
     std::shared_ptr<SQLDatabaseManager> _manager;
@@ -109,13 +126,11 @@ private:
     std::unique_ptr<QSettings> _settings;
 
     bool _recentlyCheckedForUpdates = false;
+    bool _recentlyCheckedForSourceUpdates = false;
 
-    // Cached information for various dialogs
     bool _databaseMigrating = false;
-    bool _updateAvailable = false;
-    std::string _updateVersionNumber;
-    std::string _updateURL;
-    std::string _updateDescription;
+
+    std::deque<std::function<void()>> _dialogQueue;
 
     void installTranslator(void);
     void translateUI(void);
@@ -154,11 +169,12 @@ private:
     void openWelcomeWindow(void);
 
     void checkForUpdate(bool showProgress);
+    void checkForSourceUpdate(bool showProgress);
 
     void closeEvent(QCloseEvent *event) override;
 
 signals:
-    void searchHistoryClicked(const searchTermHistoryItem &pair);
+    void searchHistoryClicked(const SearchTermHistoryItem &pair);
     void viewHistoryClicked(const Entry &entry);
 
     void favouriteCurrentEntry(void);
@@ -173,13 +189,16 @@ signals:
 
 public slots:
     void notifyUpdateAvailable(bool updateAvailable,
-                               std::string versionNumber,
-                               std::string url,
-                               std::string description,
+                               std::optional<std::string> versionNumber,
+                               std::optional<std::string> url,
+                               std::optional<std::string> description,
                                bool showIfNoUpdate = false);
+    void notifySourceUpdateAvailable(
+        std::vector<IUpdateChecker::SourceManifestMetadata> &a,
+        bool showIfNoUpdate = false);
     void notifyDatabaseMigration(void);
     void finishedDatabaseMigration(bool success);
-    void forwardSearchHistoryItem(const searchTermHistoryItem &pair);
+    void forwardSearchHistoryItem(const SearchTermHistoryItem &pair);
     void forwardViewHistoryItem(const Entry &entry);
     void searchRequested(void);
     void updateStyleRequested(void);

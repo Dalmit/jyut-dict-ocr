@@ -1,19 +1,20 @@
 #ifndef SETTINGSWINDOW_H
 #define SETTINGSWINDOW_H
 
-#include "logic/database/sqldatabasemanager.h"
-
-#include <QAction>
-#include <QEvent>
-#include <QLayout>
 #include <QMainWindow>
-#include <QSettings>
-#include <QStackedWidget>
-#include <QToolBar>
-#include <QToolButton>
 
 #include <memory>
 #include <vector>
+
+class SQLDatabaseManager;
+
+class QAction;
+class QEvent;
+class QLayout;
+class QSettings;
+class QStackedWidget;
+class QToolBar;
+class QToolButton;
 
 // The SettingsWindow allows users to modify settings. Surprise!
 

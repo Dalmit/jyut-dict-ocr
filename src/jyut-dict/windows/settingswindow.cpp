@@ -6,6 +6,7 @@
 #include "components/settings/searchtab.h"
 #include "components/settings/settingstab.h"
 #include "components/settings/texttab.h"
+#include "logic/database/sqldatabasemanager.h"
 #include "logic/settings/settings.h"
 #include "logic/settings/settingsutils.h"
 #ifdef Q_OS_MAC
@@ -17,21 +18,26 @@
 #endif
 #include "logic/utils/utils_qt.h"
 
+#include <QAction>
 #include <QActionGroup>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QLayout>
 #include <QPalette>
+#include <QSettings>
+#include <QStackedWidget>
 #include <QTimer>
+#include <QToolBar>
+#include <QToolButton>
 
 SettingsWindow::SettingsWindow(std::shared_ptr<SQLDatabaseManager> manager,
                                QWidget *parent)
-    : QMainWindow{nullptr, Qt::Window},
-      _parent{parent}
+    : QMainWindow{nullptr, Qt::Window}
+    , _parent{parent}
+    , _settings{Settings::getSettings()}
+    , _manager{manager}
 {
-    _settings = Settings::getSettings();
-
-    _manager = manager;
-
     setupUI();
     translateUI();
 
@@ -385,10 +391,12 @@ void SettingsWindow::setStyle(bool use_dark)
     // Customize the look of the toolbar
 #if defined(Q_OS_WIN)
     if (use_dark) {
-        _toolBar->setStyleSheet("QToolBar {"
-                                "   background-color: black; "
-                                "   border-top: 1px solid black; "
-                                "}");
+        _toolBar->setStyleSheet(
+            "QToolBar {"
+            "   background-color: #202020; "
+            "   border-top: 1px solid #202020; "
+            "   border-bottom: 1px solid palette(alternate-base); "
+            "}");
     } else {
         _toolBar->setStyleSheet("QToolBar {"
                                 "   background-color: white;"
@@ -397,14 +405,15 @@ void SettingsWindow::setStyle(bool use_dark)
 #elif defined(Q_OS_LINUX)
     if (Utils::isDarkMode()) {
         _toolBar->setStyleSheet("QToolBar { "
-                                "   background-color: palette(alternate-base); "
+                                "   background-color: #2E2E32; "
                                 "   border-bottom: 1px solid palette(window); "
                                 "} ");
     } else {
-        _toolBar->setStyleSheet("QToolBar { "
-                                "   background-color: palette(window); "
-                                "   border-bottom: 1px solid palette(alternate-base); "
-                                "} ");
+        _toolBar->setStyleSheet(
+            "QToolBar { "
+            "   background-color: white; "
+            "   border-bottom: 1px solid palette(alternate-base); "
+            "} ");
     }
 #endif
 }

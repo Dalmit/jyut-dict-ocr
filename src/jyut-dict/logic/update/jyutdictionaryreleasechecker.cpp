@@ -8,8 +8,10 @@
 #include <QNetworkReply>
 #include <QSysInfo>
 #include <QTimer>
+#include <QtNetwork>
 
 #include <iostream>
+#include <optional>
 
 namespace {
 constexpr auto JYUT_DICTIONARY_UPDATE_URL
@@ -63,7 +65,12 @@ void JyutDictionaryReleaseChecker::checkForNewUpdate()
             &JyutDictionaryReleaseChecker::parseReply);
     _reply = _manager->get(_request);
     QTimer::singleShot(15000, this, [&]() {
-        emit foundUpdate(false, "", "", "");
+        emit foundUpdate(IUpdateChecker::AppManifestMetadata{
+            .updateAvailable = false,
+            .versionNumber = std::nullopt,
+            .url = std::nullopt,
+            .description = std::nullopt,
+        });
     });
 }
 
@@ -83,7 +90,12 @@ void JyutDictionaryReleaseChecker::parseReply(QNetworkReply *reply)
     bool updateAvailable;
     std::string url, versionNumber, description;
     if (parseJSON(content, updateAvailable, versionNumber, url, description)) {
-        emit foundUpdate(updateAvailable, versionNumber, url, description);
+        emit foundUpdate(IUpdateChecker::AppManifestMetadata{
+            .updateAvailable = updateAvailable,
+            .versionNumber = versionNumber,
+            .url = url,
+            .description = description,
+        });
     }
 }
 
@@ -111,7 +123,7 @@ bool JyutDictionaryReleaseChecker::parseJSON(const std::string &data,
     QJsonDocument doc = QJsonDocument::fromJson(
         QString::fromStdString(data.c_str()).toUtf8());
     QJsonValue version;
-    foreach (version, doc.array()) {
+    for (const auto &version : doc.array()) {
         QJsonObject versionObject = version.toObject();
 
         // Check if the version on the web is for the correct channel
@@ -166,7 +178,7 @@ bool JyutDictionaryReleaseChecker::parseJSON(const std::string &data,
         }
 
         QJsonValue link;
-        foreach (link, versionObject.value("links").toArray()) {
+        for (const auto &link : versionObject.value("links").toArray()) {
             QJsonObject linkObject = link.toObject();
 
             // Target kernel must match
@@ -176,26 +188,33 @@ bool JyutDictionaryReleaseChecker::parseJSON(const std::string &data,
             }
 
             // OS must be compatible
-            bool doubleConversionStatus;
-            auto webOSVersion = linkObject.value("minOSVersionNumber")
-                                    .toString()
-                                    .toDouble(&doubleConversionStatus);
-            if (!doubleConversionStatus) {
-                continue;
+            auto webOSVersion
+                = linkObject.value("minOSVersionNumber").toString().split(".");
+            auto currentOSVersion = QSysInfo::productVersion().split(".");
+            bool webOSVersionTooHigh = false;
+            for (size_t i = 0;
+                 i < std::max(webOSVersion.size(), currentOSVersion.size());
+                 ++i) {
+                if (webOSVersion.size() > i && currentOSVersion.size() > i) {
+                    if (currentOSVersion[i].toUInt()
+                        < webOSVersion[i].toUInt()) {
+                        webOSVersionTooHigh = true;
+                        break;
+                    }
+                } else if (webOSVersion.size() > i) {
+                    webOSVersionTooHigh = true;
+                    break;
+                }
             }
-            auto currentOSVersion = QSysInfo::productVersion().toDouble(
-                &doubleConversionStatus);
-            if (!doubleConversionStatus) {
-                continue;
-            }
-            if (currentOSVersion < webOSVersion) {
+
+            if (webOSVersionTooHigh) {
                 continue;
             }
 
             // At least one architecture must match the local architecture
             bool matchesArch = false;
             QJsonValue webArch;
-            foreach (webArch, linkObject.value("arch").toArray()) {
+            for (const auto &webArch : linkObject.value("arch").toArray()) {
                 if (webArch.toString() == QSysInfo::buildCpuArchitecture()) {
                     matchesArch = true;
                     break;

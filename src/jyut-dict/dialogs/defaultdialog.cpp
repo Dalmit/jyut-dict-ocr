@@ -2,30 +2,33 @@
 
 #include "logic/settings/settings.h"
 #include "logic/settings/settingsutils.h"
-#include "logic/strings/strings.h"
 #ifdef Q_OS_MAC
 #include "logic/utils/utils_mac.h"
 #elif defined(Q_OS_LINUX)
 #include "logic/utils/utils_linux.h"
 #elif defined(Q_OS_WIN)
+#include "logic/strings/strings.h"
 #include "logic/utils/utils_windows.h"
 #endif
 
-#include <QCoreApplication>
 #include <QAbstractButton>
+#include <QCoreApplication>
+#include <QEvent>
 #include <QGridLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QSpacerItem>
+#include <QString>
 #include <QStyle>
 
 DefaultDialog::DefaultDialog(const QString &reason,
                              const QString &description,
                              QWidget *parent)
-    : QMessageBox{parent}
+    : _settings{Settings::getSettings()}
+    , QMessageBox{parent}
 {
     setObjectName("DefaultDialog");
-    _settings = Settings::getSettings();
+    setAttribute(Qt::WA_DeleteOnClose);
 
     setupUI(reason, description);
     translateUI();
@@ -74,12 +77,6 @@ void DefaultDialog::setupUI(const QString &reason, const QString &description)
 #elif defined(Q_OS_LINUX)
     setWindowTitle(" ");
 #endif
-
-    QList<QLabel *> labels = this->findChildren<QLabel *>();
-    foreach (const auto &label, labels) {
-        label->setTextInteractionFlags(Qt::NoTextInteraction);
-    }
-
     setWidth(400);
     deselectButtons();
 }
@@ -109,6 +106,11 @@ void DefaultDialog::setStyle(bool use_dark)
         static_cast<unsigned long>(interfaceSize - 1));
     int bodyFontSizeHan = Settings::bodyFontSizeHan.at(
         static_cast<unsigned long>(interfaceSize - 1));
+
+    QList<QLabel *> labels = this->findChildren<QLabel *>();
+    foreach (const auto &label, labels) {
+        label->setTextInteractionFlags(Qt::NoTextInteraction);
+    }
 
 #ifdef Q_OS_MAC
     QString style{"QLabel[isHan=\"true\"] { "

@@ -1,19 +1,29 @@
 #include "maintoolbar.h"
 
+#include "components/mainwindow/searchlineedit.h"
+#include "components/mainwindow/searchoptionsradiogroupbox.h"
 #include "logic/search/searchoptionsmediator.h"
+#include "logic/search/sqlsearch.h"
 #include "logic/settings/settingsutils.h"
 #ifdef Q_OS_MAC
 #include "logic/utils/utils_mac.h"
-#elif defined (Q_OS_LINUX)
+#include "logic/utils/utils_qt.h"
+#elif defined(Q_OS_LINUX)
 #include "logic/utils/utils_linux.h"
 #elif defined(Q_OS_WIN)
 #include "logic/settings/settings.h"
 #include "logic/utils/utils_windows.h"
 #endif
-#include "logic/utils/utils_qt.h"
 
+#include <QAction>
+#include <QEvent>
+#include <QFocusEvent>
+#include <QGridLayout>
 #include <QGuiApplication>
+#include <QMenu>
 #include <QStyleHints>
+#include <QToolButton>
+#include <QWidget>
 
 MainToolBar::MainToolBar(std::shared_ptr<SQLSearch> sqlSearch,
                          std::shared_ptr<SQLUserHistoryUtils> sqlHistoryUtils,
@@ -210,12 +220,12 @@ void MainToolBar::setStyle(bool use_dark)
 #ifdef Q_OS_LINUX
     if (Utils::isDarkMode()) {
         setStyleSheet("QToolBar { "
-                      "   background-color: palette(alternate-base); "
+                      "   background-color: #2E2E32; "
                       "   border-bottom: 1px solid palette(window); "
                       "}");
     } else {
         setStyleSheet("QToolBar { "
-                      "   background: palette(window); "
+                      "   background: white; "
                       "   border-bottom: 1px solid palette(alternate-base); "
                       "}");
     }
@@ -224,8 +234,9 @@ void MainToolBar::setStyle(bool use_dark)
 #ifdef Q_OS_WIN
     if (use_dark) {
         setStyleSheet("QToolBar { "
-                      "   background-color: black; "
-                      "   border-top: 1px solid black; "
+                      "   background-color: #202020; "
+                      "   border-top: 1px solid #202020; "
+                      "   border-bottom: 1px solid palette(alternate-base); "
                       "}");
     } else {
         setStyleSheet("QToolBar { "
@@ -285,7 +296,7 @@ void MainToolBar::setOpenFavouritesAction(QAction *action) const
     });
 }
 
-void MainToolBar::forwardSearchHistoryItem(const searchTermHistoryItem &pair) const
+void MainToolBar::forwardSearchHistoryItem(const SearchTermHistoryItem &pair) const
 {
     _optionsBox->setOption(static_cast<SearchParameters>(pair.second));
     _searchBar->setText(pair.first.c_str());

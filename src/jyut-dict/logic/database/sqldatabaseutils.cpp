@@ -1,26 +1,18 @@
 #include "sqldatabaseutils.h"
 
+#include <QFile>
+#include <QUuid>
 #include <QtSql>
 
 #include <chrono>
 #include <thread>
 
-SQLDatabaseUtils::SQLDatabaseUtils(std::shared_ptr<SQLDatabaseManager> manager)
-{
-    _manager = manager;
-}
-
-bool SQLDatabaseUtils::backupDatabase(void)
-{
-    return _manager->backupDictionaryDatabase();
-}
-
 // Database differences from version 1 to version 2:
 // - Added chinese_sentences, nonchinese_sentences, and sentence_links tables
 //   to properly support showing sentences in the GUI.
-bool SQLDatabaseUtils::migrateDatabaseFromOneToTwo(void)
+bool SQLDatabaseUtils::migrateDatabaseFromOneToTwo(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     query.exec(
         "CREATE TABLE IF NOT EXISTS chinese_sentences( "
@@ -63,9 +55,9 @@ bool SQLDatabaseUtils::migrateDatabaseFromOneToTwo(void)
 // - Added label to definitions table, to display parts of speech or other label
 // - Added fk_entry_id to definitions_fts for faster lookup
 // - Added unique constraint on sentence links
-bool SQLDatabaseUtils::migrateDatabaseFromTwoToThree(void)
+bool SQLDatabaseUtils::migrateDatabaseFromTwoToThree(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     // Add new definitions->chinese_sentence link table
     query.exec(
@@ -214,9 +206,9 @@ bool SQLDatabaseUtils::migrateDatabaseFromTwoToThree(void)
 // Database differences from version 3 to version 4:
 // - Added indexes on simplified, jyutping, and pinyin
 // - Added indexes on sentence links
-bool SQLDatabaseUtils::migrateDatabaseFromThreeToFour(void)
+bool SQLDatabaseUtils::migrateDatabaseFromThreeToFour(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     query.exec("CREATE INDEX IF NOT EXISTS entries_simplified_idx ON "
                "entries(simplified);");
@@ -248,9 +240,9 @@ bool SQLDatabaseUtils::migrateDatabaseFromThreeToFour(void)
 }
 
 // Update the database to whatever the current version is.
-bool SQLDatabaseUtils::updateDatabase(void)
+bool SQLDatabaseUtils::updateDatabase(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     query.exec("PRAGMA user_version");
     int version = -1;
@@ -266,19 +258,19 @@ bool SQLDatabaseUtils::updateDatabase(void)
         case -1:
             [[fallthrough]];
         case 1:
-            if (!migrateDatabaseFromOneToTwo()) {
+            if (!migrateDatabaseFromOneToTwo(db)) {
                 success = false;
                 break;
             }
             [[fallthrough]];
         case 2:
-            if (!migrateDatabaseFromTwoToThree()) {
+            if (!migrateDatabaseFromTwoToThree(db)) {
                 success = false;
                 break;
             }
             [[fallthrough]];
         case 3:
-            if (!migrateDatabaseFromThreeToFour()) {
+            if (!migrateDatabaseFromThreeToFour(db)) {
                 success = false;
                 break;
             }
@@ -306,9 +298,9 @@ bool SQLDatabaseUtils::updateDatabase(void)
 // Reads a mapping of sourcename / sourceshortname from the database
 // so they can later be converted between the two.
 bool SQLDatabaseUtils::readSources(
-    std::vector<std::pair<std::string, std::string>> &sources)
+    QSqlDatabase &db, std::vector<std::pair<std::string, std::string>> &sources)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
     query.exec("SELECT sourcename, sourceshortname FROM sources");
 
     if (query.lastError().isValid()) {
@@ -331,10 +323,13 @@ bool SQLDatabaseUtils::readSources(
 }
 
 // Reads all the metadata about the sources.
-bool SQLDatabaseUtils::readSources(std::vector<DictionaryMetadata> &sources)
+bool SQLDatabaseUtils::readSources(QSqlDatabase &db,
+                                   std::vector<SourceMetadata> &sources)
 {
-    QSqlQuery query{_manager->getDatabase()};
-    query.exec("SELECT sourcename, version, description, legal, link, other "
+    QSqlQuery query{db};
+    query.setForwardOnly(true);
+    query.exec("SELECT sourcename, version, description, legal, link, "
+               "  update_url, other "
                "FROM sources");
 
     if (query.lastError().isValid()) {
@@ -346,6 +341,7 @@ bool SQLDatabaseUtils::readSources(std::vector<DictionaryMetadata> &sources)
     int descriptionIndex = query.record().indexOf("description");
     int legalIndex = query.record().indexOf("legal");
     int linkIndex = query.record().indexOf("link");
+    int updateURLIndex = query.record().indexOf("update_url");
     int otherIndex = query.record().indexOf("other");
 
     while (query.next()) {
@@ -356,14 +352,17 @@ bool SQLDatabaseUtils::readSources(std::vector<DictionaryMetadata> &sources)
             = query.value(descriptionIndex).toString().toStdString();
         std::string legal = query.value(legalIndex).toString().toStdString();
         std::string link = query.value(linkIndex).toString().toStdString();
+        std::string updateURL
+            = query.value(updateURLIndex).toString().toStdString();
         std::string other = query.value(otherIndex).toString().toStdString();
 
-        DictionaryMetadata dictionary{source,
-                                      version,
-                                      description,
-                                      legal,
-                                      link,
-                                      other};
+        SourceMetadata dictionary{source,
+                                  version,
+                                  description,
+                                  legal,
+                                  link,
+                                  updateURL,
+                                  other};
 
         sources.push_back(dictionary);
     }
@@ -371,9 +370,9 @@ bool SQLDatabaseUtils::readSources(std::vector<DictionaryMetadata> &sources)
     return true;
 }
 
-bool SQLDatabaseUtils::dropIndices(void)
+bool SQLDatabaseUtils::dropIndices(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
     query.exec("DROP INDEX fk_entry_id_index");
     if (query.lastError().isValid()) {
         return false;
@@ -413,9 +412,9 @@ bool SQLDatabaseUtils::dropIndices(void)
     return !query.lastError().isValid();
 }
 
-bool SQLDatabaseUtils::rebuildIndices(void)
+bool SQLDatabaseUtils::rebuildIndices(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
     emit rebuildingIndexes();
 
     query.exec("INSERT INTO entries_fts (rowid, pinyin, jyutping) "
@@ -463,9 +462,10 @@ bool SQLDatabaseUtils::rebuildIndices(void)
     return true;
 }
 
-bool SQLDatabaseUtils::deleteSourceFromDatabase(const std::string &source)
+bool SQLDatabaseUtils::deleteSourceFromDatabase(QSqlDatabase &db,
+                                                const std::string &source)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     query.prepare("DELETE FROM sources WHERE sourcename = ?");
     query.addBindValue(source.c_str());
@@ -480,9 +480,9 @@ bool SQLDatabaseUtils::deleteSourceFromDatabase(const std::string &source)
 // - Deleting those entries
 // - Re-creating the FTS5 tables
 // - Re-creating indices that were previously invalidated.
-bool SQLDatabaseUtils::removeDefinitionsFromDatabase(void)
+bool SQLDatabaseUtils::removeDefinitionsFromDatabase(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     emit deletingDefinitions();
 
@@ -527,9 +527,9 @@ bool SQLDatabaseUtils::removeDefinitionsFromDatabase(void)
 //   linked to any other sentences, and delete them.
 // - Use the same LEFT JOIN (but on nonchinese_sentences) to delete
 //   nonchinese_sentences that are also no longer linked to any sentences.
-bool SQLDatabaseUtils::removeSentencesFromDatabase(void)
+bool SQLDatabaseUtils::removeSentencesFromDatabase(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     emit deletingSentences();
 
@@ -576,17 +576,24 @@ bool SQLDatabaseUtils::removeSentencesFromDatabase(void)
 }
 
 // Method to remove a source from the database, based on the name of the source.
-bool SQLDatabaseUtils::removeSource(const std::string &source, bool skipCleanup)
+bool SQLDatabaseUtils::removeSource(
+    QSqlDatabase &db,
+    const std::string &source,
+    const std::shared_ptr<SQLDatabaseManager> &manager,
+    bool skipCleanup)
 {
-    backupDatabase();
-    return removeSources(std::vector<std::string>{source}, skipCleanup);
+    if (manager) {
+        manager->backupDictionaryDatabase();
+    }
+    return removeSources(db, std::vector<std::string>{source}, skipCleanup);
 }
 
 // Method to remove multiple sources from the database, based on the name of the sources.
-bool SQLDatabaseUtils::removeSources(std::span<const std::string> sources,
+bool SQLDatabaseUtils::removeSources(QSqlDatabase &db,
+                                     std::span<const std::string> sources,
                                      bool skipCleanup)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     // Foreign keys cannnot be turned on inside a SAVEPOINT!
     // Turn on before this savepoint.
@@ -613,7 +620,7 @@ bool SQLDatabaseUtils::removeSources(std::span<const std::string> sources,
             type += query.value(otherIndex).toString().toStdString() + ",";
         }
 
-        if (!deleteSourceFromDatabase(source)) {
+        if (!deleteSourceFromDatabase(db, source)) {
             emit finishedDeletion(
                 false, tr("Failed to delete source from database..."));
             query.exec("ROLLBACK");
@@ -629,23 +636,23 @@ bool SQLDatabaseUtils::removeSources(std::span<const std::string> sources,
     // sentences is a sentences source.
     bool success = false;
     try {
-        dropIndices();
+        dropIndices(db);
 
         if (type.length() == 0 || type.find("words") != std::string::npos) {
-            if (!removeDefinitionsFromDatabase()) {
+            if (!removeDefinitionsFromDatabase(db)) {
                 throw std::runtime_error(
                     tr("Failed to remove definitions...").toStdString());
             }
         }
         if (type.find("sentences") != std::string::npos) {
-            if (!removeSentencesFromDatabase()) {
+            if (!removeSentencesFromDatabase(db)) {
                 throw std::runtime_error(
                     tr("Failed to remove sentences...").toStdString());
             }
         }
 
         if (!skipCleanup) {
-            rebuildIndices();
+            rebuildIndices(db);
         }
 
         query.exec("RELEASE source_removal");
@@ -668,9 +675,10 @@ bool SQLDatabaseUtils::removeSources(std::span<const std::string> sources,
 // Inserting into the database loops through all the sources in the attached
 // database and attempts to insert each one into the database.
 std::pair<bool, std::string> SQLDatabaseUtils::insertSourcesIntoDatabase(
+    QSqlDatabase &db,
     std::unordered_map<std::string, std::string> old_source_ids)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     query.exec(
         "SELECT sourcename, sourceshortname, version, description, legal, "
@@ -686,7 +694,7 @@ std::pair<bool, std::string> SQLDatabaseUtils::insertSourcesIntoDatabase(
     int otherIndex = query.record().indexOf("other");
 
     while (query.next()) {
-        QSqlQuery insertQuery{_manager->getDatabase()};
+        QSqlQuery insertQuery{db};
 
         QString sourcename{query.value(sourcenameIndex).toString()};
         QString sourceshortname{query.value(sourceshortnameIndex).toString()};
@@ -754,9 +762,9 @@ std::pair<bool, std::string> SQLDatabaseUtils::insertSourcesIntoDatabase(
 //     - Matches the fk_entry_id (from the attached db) to the new entry_id
 //       in the main database.
 // - Insert all the entries from the CTE into the main table.
-bool SQLDatabaseUtils::addDefinitionSource(void)
+bool SQLDatabaseUtils::addDefinitionSource(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     emit insertingEntries();
 
@@ -854,9 +862,9 @@ bool SQLDatabaseUtils::addDefinitionSource(void)
 //   identifies corresponding defnitions (aka entry / definition / label / source), join
 //   the definition -> Chinese sentence links from defs_s_links_tmp using that
 //   information
-bool SQLDatabaseUtils::addSentenceSource(void)
+bool SQLDatabaseUtils::addSentenceSource(QSqlDatabase &db)
 {
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     query.exec("INSERT INTO chinese_sentences "
                "  (chinese_sentence_id, traditional, simplified, pinyin, "
@@ -1008,12 +1016,17 @@ bool SQLDatabaseUtils::addSentenceSource(void)
     return !query.lastError().isValid();
 }
 
-bool SQLDatabaseUtils::addSource(const std::string &filepath,
-                                 bool overwriteConflictingSource)
+bool SQLDatabaseUtils::addSource(
+    QSqlDatabase &db,
+    const std::string &filepath,
+    const std::shared_ptr<SQLDatabaseManager> &manager,
+    bool overwriteConflictingSource)
 {
-    backupDatabase();
+    if (manager) {
+        manager->backupDictionaryDatabase();
+    }
 
-    QSqlQuery query{_manager->getDatabase()};
+    QSqlQuery query{db};
 
     query.prepare("ATTACH DATABASE ? AS db");
     query.addBindValue(filepath.c_str());
@@ -1057,9 +1070,11 @@ bool SQLDatabaseUtils::addSource(const std::string &filepath,
             old_source_ids[query.value(sourcenameIndex).toString().toStdString()]
                 = query.value(sourceIdIndex).toString().toStdString();
         }
-        if (!removeSources(sourcesToRemove, /* skipCleanup */ true)) {
+        if (!removeSources(db,
+                           sourcesToRemove,
+                           /* skipCleanup */ true)) {
             query.exec("DETACH DATABASE db");
-            rebuildIndices();
+            rebuildIndices(db);
             emit finishedAddition(
                 false,
                 tr("Could not add new dictionaries. We couldn't remove a "
@@ -1083,7 +1098,7 @@ bool SQLDatabaseUtils::addSource(const std::string &filepath,
         int inDatabaseVersionIndex = query.record().indexOf(
             "in_database_version");
         int newFileVersionIndex = query.record().indexOf("new_file_version");
-        conflictingDictionaryMetadata matchingDictionaryNames;
+        conflictingSourceMetadata matchingDictionaryNames;
         while (query.next()) {
             matchingDictionaryNames.emplace_back(
                 query.value(sourcenameIndex).toString().toStdString(),
@@ -1107,18 +1122,16 @@ bool SQLDatabaseUtils::addSource(const std::string &filepath,
     // otherwise, indices would not be dropped. To avoid this state, we always
     // drop indices before the savepoint, so indices are always dropped after
     // a rollback.
-    dropIndices();
+    dropIndices(db);
 
     query.exec("SAVEPOINT source_addition");
     // Insert the sources from the new database file into the database
     emit insertingSource();
-    bool success;
-    std::string errorMessage;
-    std::tie(success, errorMessage) = insertSourcesIntoDatabase(old_source_ids);
+    auto [success, errorMessage] = insertSourcesIntoDatabase(db, old_source_ids);
     if (!success) {
         query.exec("DETACH DATABASE db");
         query.exec("ROLLBACK");
-        rebuildIndices();
+        rebuildIndices(db);
         emit finishedAddition(
             false,
             tr("Could not insert source. Could it be a duplicate of a "
@@ -1131,25 +1144,70 @@ bool SQLDatabaseUtils::addSource(const std::string &filepath,
     // Then, insert the definitions and sentences
     success = false;
     try {
-        if (!addDefinitionSource()) {
+        if (!addDefinitionSource(db)) {
             throw std::runtime_error(
                 tr("Unable to add definitions...").toStdString());
         }
-        if (!addSentenceSource()) {
+        if (!addSentenceSource(db)) {
             throw std::runtime_error(
                 tr("Unable to add sentences...").toStdString());
         }
 
         query.exec("RELEASE source_addition");
-        rebuildIndices();
+        rebuildIndices(db);
         success = true;
         emit finishedAddition(success);
     } catch (std::exception &e) {
         query.exec("ROLLBACK");
-        rebuildIndices();
+        rebuildIndices(db);
         emit finishedAddition(success, e.what());
     }
 
     query.exec("DETACH DATABASE db");
     return success;
+}
+
+bool SQLDatabaseUtils::mergeDatabases(const std::vector<std::string> &paths)
+{
+    if (paths.empty()) {
+        return true;
+    }
+
+    const auto &outputDatabasePath = paths[0];
+    QFile databaseFile{QString::fromStdString(outputDatabasePath)};
+    if (!databaseFile.open(QIODevice::ReadWrite)) {
+        return false;
+    }
+
+    QString outputConnectionName{
+        QUuid::createUuid().toString(QUuid::WithoutBraces)};
+    QSqlDatabase::addDatabase("QSQLITE", outputConnectionName);
+    QSqlDatabase::database(outputConnectionName)
+        .setDatabaseName(QString::fromStdString(outputDatabasePath));
+    QSqlDatabase::database(outputConnectionName).open();
+    QSqlDatabase outputDatabase = QSqlDatabase::database(outputConnectionName);
+
+    updateDatabase(outputDatabase);
+    dropIndices(outputDatabase);
+
+    for (const auto &p : paths) {
+        if (p == outputDatabasePath) {
+            continue;
+        }
+
+        QString tmpConnectionName{
+            QUuid::createUuid().toString(QUuid::WithoutBraces)};
+        QSqlDatabase::addDatabase("QSQLITE", tmpConnectionName);
+        QSqlDatabase::database(tmpConnectionName)
+            .setDatabaseName(QString::fromStdString(p));
+        QSqlDatabase::database(tmpConnectionName).open();
+        QSqlDatabase tmpDatabase = QSqlDatabase::database(tmpConnectionName);
+        updateDatabase(tmpDatabase);
+        tmpDatabase.close();
+
+        addSource(outputDatabase, p);
+    }
+
+    outputDatabase.close();
+    return true;
 }

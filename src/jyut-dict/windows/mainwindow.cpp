@@ -1,11 +1,20 @@
 ﻿#include "windows/mainwindow.h"
 
+#include "components/favouritewindow/favouritesplitter.h"
+#include "components/mainwindow/mainsplitter.h"
+#include "components/mainwindow/maintoolbar.h"
+#include "dialogs/nosourceupdatesdialog.h"
 #include "dialogs/noupdatedialog.h"
-#include "logic/dictionary/dictionarysource.h"
+#include "logic/database/sqldatabasemanager.h"
+#include "logic/database/sqldatabaseutils.h"
+#include "logic/database/sqluserdatautils.h"
+#include "logic/search/sqlsearch.h"
 #include "logic/settings/settings.h"
 #include "logic/settings/settingsutils.h"
+#include "logic/source/sourceutils.h"
 #include "logic/strings/strings.h"
-#include "windows/updatewindow.h"
+#include "logic/update/jyutdictionaryreleasechecker.h"
+#include "logic/update/sourcereleasechecker.h"
 #ifdef Q_OS_MAC
 #include "logic/utils/utils_mac.h"
 #elif defined(Q_OS_LINUX)
@@ -14,26 +23,39 @@
 #include "logic/utils/utils_windows.h"
 #endif
 #include "logic/utils/utils_qt.h"
+#include "windows/aboutwindow.h"
+#include "windows/historywindow.h"
+#include "windows/settingswindow.h"
+#include "windows/sourceupdatewindow.h"
+#include "windows/updatewindow.h"
+#include "windows/welcomewindow.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QClipboard>
-#include <QtConcurrent/QtConcurrent>
-#include <QCoreApplication>
 #include <QColor>
+#include <QCoreApplication>
 #include <QDesktopServices>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
+#include <QProgressDialog>
 #include <QSettings>
 #include <QSpacerItem>
-#include <QtSvg>
 #include <QTimer>
+#include <QTranslator>
 #include <QUrl>
+#include <QWidget>
+#include <QtConcurrent/QtConcurrent>
+#include <QtSvg>
 
 #include <memory>
 
-MainWindow::MainWindow(QWidget *parent) :
-    QMainWindow(parent)
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow{parent}
 {
     // Set window size
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
@@ -81,7 +103,7 @@ MainWindow::MainWindow(QWidget *parent) :
     _settings->endArray();
 
     // Connect signals to tell the user that database migration has occurred
-    _utils = std::make_unique<SQLDatabaseUtils>(_manager);
+    _utils = std::make_unique<SQLDatabaseUtils>();
     connect(_utils.get(), &SQLDatabaseUtils::migratingDatabase, this, [&]() {
         _databaseMigrating = true;
         notifyDatabaseMigration();
@@ -95,10 +117,11 @@ MainWindow::MainWindow(QWidget *parent) :
             });
 
     // Populate global source table
+    QSqlDatabase db = _manager->getDatabase();
     std::vector<std::pair<std::string, std::string>> sources;
-    _utils->readSources(sources);
+    _utils->readSources(db, sources);
     for (const auto &source : sources) {
-        DictionarySourceUtils::addSource(source.first, source.second);
+        SourceUtils::addSource(source.first, source.second);
     }
 
     // Install translator
@@ -206,10 +229,24 @@ MainWindow::MainWindow(QWidget *parent) :
         });
     }
 
+    bool sourceUpdateNotificationEnabled
+        = _settings
+              ->value("Advanced/sourceUpdateNotificationsEnabled",
+                      QVariant{true})
+              .toBool();
+    _sourceChecker = new SourceReleaseChecker{_manager, this};
+    if (sourceUpdateNotificationEnabled) {
+        QTimer::singleShot(1500, this, [&]() {
+            checkForSourceUpdate(/* showProgress = */ false);
+        });
+    }
+
     // Perform database migration if needed
     QTimer::singleShot(1000, this, [&]() {
-        std::ignore = QtConcurrent::run(&SQLDatabaseUtils::updateDatabase,
-                                        _utils.get());
+        std::ignore = QtConcurrent::run([this]() {
+            QSqlDatabase dictionaryDB = _manager->getDatabase();
+            _utils->updateDatabase(dictionaryDB);
+        });
     });
 }
 
@@ -370,7 +407,8 @@ void MainWindow::translateUI(void)
 
     _helpAction->setText(tr("%1 Help").arg(
         QCoreApplication::translate("strings", Strings::PRODUCT_NAME)));
-    _updateAction->setText(tr("Check for Updates..."));
+    _updateAction->setText(tr("Check for App Updates..."));
+    _updateSourcesAction->setText(tr("Check for Dictionary Updates..."));
 
     Utils::refreshLanguageMap();
 
@@ -403,9 +441,10 @@ void MainWindow::setStyle(bool use_dark)
 #elif defined(Q_OS_LINUX) || defined(Q_OS_WIN)
     if (!use_dark) {
         QPalette palette = QApplication::style()->standardPalette();
-        palette.setColor(QPalette::Window, QColor{CONTENT_BACKGROUND_COLOUR_LIGHT_R,
-                                                  CONTENT_BACKGROUND_COLOUR_LIGHT_G,
-                                                  CONTENT_BACKGROUND_COLOUR_LIGHT_B});
+        palette.setColor(QPalette::Window,
+                         QColor{CONTENT_BACKGROUND_COLOUR_LIGHT_R,
+                                CONTENT_BACKGROUND_COLOUR_LIGHT_G,
+                                CONTENT_BACKGROUND_COLOUR_LIGHT_B});
         palette.setColor(QPalette::Base, Qt::white);
         palette.setColor(QPalette::AlternateBase, QColor{HEADER_BACKGROUND_COLOUR_LIGHT_R,
                                                          HEADER_BACKGROUND_COLOUR_LIGHT_G,
@@ -468,8 +507,7 @@ void MainWindow::setStyle(bool use_dark)
 #ifdef Q_OS_LINUX
     if (use_dark) {
         menuBar()->setStyleSheet("QMenuBar { "
-                                 "   background-color: palette(alternate-base); "
-                                 "   border-bottom: 1px solid palette(window);"
+                                 "   background-color: #2E2E32; "
                                  "} ");
         qApp->setStyleSheet(
             "QCheckBox::indicator { "
@@ -510,10 +548,11 @@ void MainWindow::setStyle(bool use_dark)
             "   image: url(:/images/radio_button_unchecked_inverted.png); "
             "} ");
     } else {
-        menuBar()->setStyleSheet("QMenuBar { "
-                                 "   background-color: palette(window); "
-                                 "   border-bottom: 1px solid palette(alternate-base);"
-                                 "} ");
+        menuBar()->setStyleSheet(
+            "QMenuBar { "
+            "   background-color: white; "
+            "   border-bottom: 1px solid palette(alternate-base);"
+            "} ");
         qApp->setStyleSheet(
             "QCheckBox::indicator { "
             "   height: 20px; "
@@ -553,7 +592,7 @@ void MainWindow::setStyle(bool use_dark)
     // Some additional stylesheet overrides for Windows
     if (use_dark) {
         menuBar()->setStyleSheet("QMenuBar { "
-                                 "   background-color: black; "
+                                 "   background-color: #202020; "
                                  "} "
                                  ""
                                  "QMenuBar::item:selected { "
@@ -840,27 +879,79 @@ void MainWindow::setStyle(bool use_dark)
 }
 
 void MainWindow::notifyUpdateAvailable(bool updateAvailable,
-                                       std::string versionNumber,
-                                       std::string url, std::string description,
+                                       std::optional<std::string> versionNumber,
+                                       std::optional<std::string> url,
+                                       std::optional<std::string> description,
                                        bool showIfNoUpdate)
 {
-    if (_welcomeWindow || _databaseMigrationDialog) {
-        return;
+    if (updateAvailable || showIfNoUpdate) {
+        if (_welcomeWindow || _databaseMigrationDialog) {
+            _dialogQueue.push_back([=, this]() {
+                notifyUpdateAvailable(updateAvailable,
+                                      versionNumber,
+                                      url,
+                                      description,
+                                      showIfNoUpdate);
+            });
+            return;
+        }
     }
 
-    _updateAvailable = false;
-
     if (updateAvailable) {
-        UpdateAvailableWindow *window = new UpdateAvailableWindow{this, versionNumber, url, description};
-        window->show();
+        _updateAvailableWindow = new UpdateAvailableWindow{this,
+                                                           versionNumber.value(),
+                                                           url.value(),
+                                                           description.value()};
+        connect(_updateAvailableWindow,
+                &UpdateAvailableWindow::destroyed,
+                this,
+                [this] {
+                    _updateAvailableWindow = nullptr;
+                    if (!_dialogQueue.empty()) {
+                        auto func = _dialogQueue.front();
+                        _dialogQueue.pop_front();
+                        func();
+                    }
+                });
+        _updateAvailableWindow->show();
     } else if (showIfNoUpdate) {
         QString currentVersion = QString{Utils::CURRENT_VERSION};
-        NoUpdateDialog *_message = new NoUpdateDialog{currentVersion, this};
-        _message->exec();
+        NoUpdateDialog *message = new NoUpdateDialog{currentVersion, this};
+        connect(message, &NoUpdateDialog::destroyed, this, [this, &message] {
+            message = nullptr;
+            if (!_dialogQueue.empty()) {
+                auto func = _dialogQueue.front();
+                _dialogQueue.pop_front();
+                func();
+            }
+        });
+        message->exec();
     }
 }
 
-void MainWindow::forwardSearchHistoryItem(const searchTermHistoryItem &pair)
+void MainWindow::notifySourceUpdateAvailable(
+    std::vector<IUpdateChecker::SourceManifestMetadata> &a, bool showIfNoUpdate)
+{
+    if (!a.empty() || showIfNoUpdate) {
+        if (_welcomeWindow || _databaseMigrationDialog
+            || _updateAvailableWindow) {
+            _dialogQueue.push_back([a, showIfNoUpdate, this]() mutable {
+                notifySourceUpdateAvailable(a, showIfNoUpdate);
+            });
+            return;
+        }
+    }
+
+    if (!a.empty()) {
+        _sourceUpdateWindow = new SourceUpdateWindow{a, _manager, this};
+        _sourceUpdateWindow->show();
+    } else if (showIfNoUpdate) {
+        NoSourceUpdatesDialog *message = new NoSourceUpdatesDialog{this};
+        message->exec();
+    }
+}
+
+void MainWindow::forwardSearchHistoryItem(const SearchTermHistoryItem &pair)
 {
     emit searchHistoryClicked(pair);
 }
@@ -1152,6 +1243,12 @@ void MainWindow::createActions(void)
         checkForUpdate(/* showProgress = */ true);
     });
     _helpMenu->addAction(_updateAction);
+
+    _updateSourcesAction = new QAction{this};
+    connect(_updateSourcesAction, &QAction::triggered, this, [this] {
+        checkForSourceUpdate(/* showProgress = */ true);
+    });
+    _helpMenu->addAction(_updateSourcesAction);
 }
 
 void MainWindow::undo(void) const
@@ -1387,6 +1484,9 @@ void MainWindow::openSettingsWindow(void)
             &SettingsWindow::triggerSearch,
             this,
             &MainWindow::searchRequested);
+    connect(_settingsWindow, &SettingsWindow::destroyed, this, [this] {
+        _settingsWindow = nullptr;
+    });
 }
 
 void MainWindow::openHistoryWindow(void)
@@ -1446,20 +1546,20 @@ void MainWindow::openWelcomeWindow(void)
     }
 
     _welcomeWindow = new WelcomeWindow{this};
-    _welcomeWindow->setAttribute(Qt::WA_DeleteOnClose);
     _welcomeWindow->setFocus();
     _welcomeWindow->show();
 
     connect(_welcomeWindow, &WelcomeWindow::welcomeCompleted, this, [&]() {
-        QTimer::singleShot(100, this, [&] {
-            // These dialogs are suppressed while the welcome window is visible,
-            // so check whether they need to be shown
-            notifyDatabaseMigration();
-            notifyUpdateAvailable(_updateAvailable,
-                                  _updateVersionNumber,
-                                  _updateURL,
-                                  _updateDescription,
-                                  /* showIfNoUpdate */ false);
+        QTimer::singleShot(100, this, [this] {
+            // Dialogs may be suppressed while the welcome window is visible,
+            // so check whether they need to be shown (it's assumed that each
+            // call will "chain" to the next one)
+            _welcomeWindow = nullptr;
+            if (!_dialogQueue.empty()) {
+                auto func = _dialogQueue.front();
+                _dialogQueue.pop_front();
+                func();
+            }
         });
 
         _settings->setValue(QString{"Advanced/%1Welcomed"}.arg(
@@ -1475,63 +1575,74 @@ void MainWindow::checkForUpdate(bool showProgress)
         connect(_checker,
                 &JyutDictionaryReleaseChecker::foundUpdate,
                 this,
-                [&](bool updateAvailable,
-                    std::string versionNumber,
-                    std::string url,
-                    std::string description) {
-                    _updateDialog->reset();
+                [&](const IUpdateChecker::UpdateVariant &v) {
+                    _updateCheckProgressDialog->reset();
 
                     disconnect(_checker, nullptr, nullptr, nullptr);
-                    notifyUpdateAvailable(updateAvailable,
-                                          versionNumber,
-                                          url,
-                                          description,
-                                          /* showIfNoUpdate = */ true);
+
+                    if (!std::holds_alternative<
+                            IUpdateChecker::AppManifestMetadata>(v)) {
+                        std::cerr << "Jyut Dictionary Release Checker did not "
+                                     "return correct type!"
+                                  << std::endl;
+                    } else {
+                        IUpdateChecker::AppManifestMetadata a
+                            = std::get<IUpdateChecker::AppManifestMetadata>(v);
+                        notifyUpdateAvailable(a.updateAvailable,
+                                              a.versionNumber,
+                                              a.url,
+                                              a.description,
+                                              /* showIfNoUpdate = */ true);
+                    }
 
                     _recentlyCheckedForUpdates = false;
                 });
 
-        _updateDialog = new QProgressDialog{"", QString(), 0, 0, this};
-        _updateDialog->setWindowModality(Qt::ApplicationModal);
-        _updateDialog->setMinimumSize(300, 75);
-        Qt::WindowFlags flags = _updateDialog->windowFlags()
+        _updateCheckProgressDialog
+            = new QProgressDialog{"", QString(), 0, 0, this};
+        _updateCheckProgressDialog->setWindowModality(Qt::ApplicationModal);
+        _updateCheckProgressDialog->setMinimumSize(300, 75);
+        Qt::WindowFlags flags = _updateCheckProgressDialog->windowFlags()
                                 | Qt::CustomizeWindowHint;
         flags &= ~(Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint
                    | Qt::WindowFullscreenButtonHint
                    | Qt::WindowContextHelpButtonHint);
-        _updateDialog->setWindowFlags(flags);
-        _updateDialog->setMinimumDuration(0);
+        _updateCheckProgressDialog->setWindowFlags(flags);
+        _updateCheckProgressDialog->setMinimumDuration(0);
 #ifdef Q_OS_WIN
-        _updateDialog->setWindowTitle(
-            QCoreApplication::translate(Strings::STRINGS_CONTEXT, Strings::PRODUCT_NAME));
+        _updateCheckProgressDialog->setWindowTitle(
+            QCoreApplication::translate(Strings::STRINGS_CONTEXT,
+                                        Strings::PRODUCT_NAME));
 #elif defined(Q_OS_LINUX)
-        _updateDialog->setWindowTitle(" ");
+        _updateCheckProgressDialog->setWindowTitle(" ");
 #endif
-        _updateDialog->setAttribute(Qt::WA_DeleteOnClose, true);
+        _updateCheckProgressDialog->setAttribute(Qt::WA_DeleteOnClose, true);
 
-        _updateDialog->setLabelText(tr("Checking for update..."));
-        _updateDialog->setRange(0, 0);
-        _updateDialog->setValue(0);
+        _updateCheckProgressDialog->setLabelText(tr("Checking for update..."));
+        _updateCheckProgressDialog->setRange(0, 0);
+        _updateCheckProgressDialog->setValue(0);
     } else {
         connect(_checker,
                 &JyutDictionaryReleaseChecker::foundUpdate,
                 this,
-                [&](bool updateAvailable,
-                    std::string versionNumber,
-                    std::string url,
-                    std::string description) {
+                [&](const IUpdateChecker::UpdateVariant &v) {
                     disconnect(_checker, nullptr, nullptr, nullptr);
 
-                    _updateAvailable = updateAvailable;
-                    _updateVersionNumber = versionNumber;
-                    _updateURL = url;
-                    _updateDescription = description;
+                    if (!std::holds_alternative<
+                            IUpdateChecker::AppManifestMetadata>(v)) {
+                        std::cerr << "Jyut Dictionary Release Checker did not "
+                                     "return correct type!"
+                                  << std::endl;
+                    } else {
+                        IUpdateChecker::AppManifestMetadata a
+                            = std::get<IUpdateChecker::AppManifestMetadata>(v);
 
-                    notifyUpdateAvailable(updateAvailable,
-                                          versionNumber,
-                                          url,
-                                          description,
-                                          /* showIfNoUpdate = */ false);
+                        notifyUpdateAvailable(a.updateAvailable,
+                                              a.versionNumber,
+                                              a.url,
+                                              a.description,
+                                              /* showIfNoUpdate = */ false);
+                    }
 
                     _recentlyCheckedForUpdates = false;
                 });
@@ -1543,9 +1654,103 @@ void MainWindow::checkForUpdate(bool showProgress)
     }
 }
 
+void MainWindow::checkForSourceUpdate(bool showProgress)
+{
+    disconnect(_sourceChecker, nullptr, nullptr, nullptr);
+    if (_sourceUpdateWindow) {
+        _sourceUpdateWindow->close();
+    }
+
+    if (showProgress) {
+        connect(_sourceChecker,
+                &SourceReleaseChecker::foundUpdate,
+                this,
+                [this](const IUpdateChecker::UpdateVariant &v) {
+                    _recentlyCheckedForSourceUpdates = false;
+                    _updateCheckProgressDialog->reset();
+
+                    disconnect(_sourceChecker, nullptr, nullptr, nullptr);
+
+                    if (!std::holds_alternative<
+                            std::vector<IUpdateChecker::SourceManifestMetadata>>(
+                            v)) {
+                        std::cerr << "Source Release Checker did not "
+                                     "return correct type!"
+                                  << std::endl;
+                    } else {
+                        std::vector<IUpdateChecker::SourceManifestMetadata> a
+                            = std::get<std::vector<
+                                IUpdateChecker::SourceManifestMetadata>>(v);
+                        notifySourceUpdateAvailable(a,
+                                                    /* showIfNoUpdate = */ true);
+                    }
+                });
+
+        _updateCheckProgressDialog
+            = new QProgressDialog{"", QString(), 0, 0, this};
+        _updateCheckProgressDialog->setWindowModality(Qt::ApplicationModal);
+        _updateCheckProgressDialog->setMinimumSize(300, 75);
+        Qt::WindowFlags flags = _updateCheckProgressDialog->windowFlags()
+                                | Qt::CustomizeWindowHint;
+        flags &= ~(Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint
+                   | Qt::WindowFullscreenButtonHint
+                   | Qt::WindowContextHelpButtonHint);
+        _updateCheckProgressDialog->setWindowFlags(flags);
+        _updateCheckProgressDialog->setMinimumDuration(0);
+#ifdef Q_OS_WIN
+        _updateCheckProgressDialog->setWindowTitle(
+            QCoreApplication::translate(Strings::STRINGS_CONTEXT,
+                                        Strings::PRODUCT_NAME));
+#elif defined(Q_OS_LINUX)
+        _updateCheckProgressDialog->setWindowTitle(" ");
+#endif
+        _updateCheckProgressDialog->setAttribute(Qt::WA_DeleteOnClose, true);
+
+        _updateCheckProgressDialog->setLabelText(
+            tr("Checking for updates to dictionaries..."));
+        _updateCheckProgressDialog->setRange(0, 0);
+        _updateCheckProgressDialog->setValue(0);
+    } else {
+        connect(_sourceChecker,
+                &SourceReleaseChecker::foundUpdate,
+                this,
+                [this](const IUpdateChecker::UpdateVariant &v) {
+                    disconnect(_sourceChecker, nullptr, nullptr, nullptr);
+                    _recentlyCheckedForSourceUpdates = false;
+
+                    if (!std::holds_alternative<
+                            std::vector<IUpdateChecker::SourceManifestMetadata>>(
+                            v)) {
+                        std::cerr << "Source Release Checker did not "
+                                     "return correct type!"
+                                  << std::endl;
+                    } else {
+                        std::vector<IUpdateChecker::SourceManifestMetadata> a
+                            = std::get<std::vector<
+                                IUpdateChecker::SourceManifestMetadata>>(v);
+                        notifySourceUpdateAvailable(a,
+                                                    /* showIfNoUpdate = */ false);
+                    }
+                });
+    }
+
+    if (!_recentlyCheckedForSourceUpdates) {
+        _recentlyCheckedForSourceUpdates = true;
+        _sourceChecker->checkForNewUpdate();
+    }
+}
+
 void MainWindow::notifyDatabaseMigration(void)
 {
-    if (_welcomeWindow || !_databaseMigrating) {
+    if (_welcomeWindow) {
+        _dialogQueue.push_back([this]() { notifyDatabaseMigration(); });
+        return;
+    } else if (!_databaseMigrating) {
+        if (!_dialogQueue.empty()) {
+            auto func = _dialogQueue.front();
+            _dialogQueue.pop_front();
+            func();
+        }
         return;
     }
 
@@ -1578,7 +1783,15 @@ void MainWindow::notifyDatabaseMigration(void)
 
 void MainWindow::finishedDatabaseMigration(bool success)
 {
-    if (_welcomeWindow || !_databaseMigrating) {
+    if (_welcomeWindow) {
+        _dialogQueue.push_back(
+            [success, this]() { finishedDatabaseMigration(success); });
+    } else if (!_databaseMigrating) {
+        if (!_dialogQueue.empty()) {
+            auto func = _dialogQueue.front();
+            _dialogQueue.pop_front();
+            func();
+        }
         return;
     }
 
@@ -1614,13 +1827,11 @@ void MainWindow::finishedDatabaseMigration(bool success)
         // that was associated with this pointer
         _databaseMigrationDialog = nullptr;
 
-        // Since the update available notification is suppressed if the database
-        // migration is visible, check whether to show the update available dialog
-        notifyUpdateAvailable(_updateAvailable,
-                              _updateVersionNumber,
-                              _updateURL,
-                              _updateDescription,
-                              /* showIfNoUpdate = */ false);
+        if (!_dialogQueue.empty()) {
+            auto func = _dialogQueue.front();
+            _dialogQueue.pop_front();
+            func();
+        }
     });
 }
 

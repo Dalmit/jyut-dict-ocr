@@ -13,22 +13,29 @@
 
 #include <QCoreApplication>
 #include <QDesktopServices>
+#include <QEvent>
 #include <QFont>
+#include <QGridLayout>
+#include <QLabel>
 #include <QPixmap>
 #include <QPropertyAnimation>
+#include <QPushButton>
+#include <QSettings>
 #include <QSize>
 #include <QStyle>
+#include <QTextEdit>
 
 UpdateAvailableWindow::UpdateAvailableWindow(QWidget *parent,
-                           std::string versionNumber,
-                           std::string url, std::string description)
-    : QWidget(parent, Qt::Window)
+                                             std::string versionNumber,
+                                             std::string url,
+                                             std::string description)
+    : QWidget{parent, Qt::Window}
+    , _versionNumber{versionNumber}
+    , _url{url}
+    , _description{description}
+    , _settings{Settings::getSettings()}
 {
-    _settings = Settings::getSettings();
-
-    _versionNumber = versionNumber;
-    _url = url;
-    _description = description;
+    setObjectName("UpdateAvailableWindow");
 
     setupUI();
     translateUI();
@@ -36,6 +43,7 @@ UpdateAvailableWindow::UpdateAvailableWindow(QWidget *parent,
     Qt::WindowFlags flags = windowFlags() | Qt::CustomizeWindowHint | Qt::WindowTitleHint;
     flags &= ~(Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint | Qt::WindowFullscreenButtonHint);
     setWindowFlags(flags);
+    setAttribute(Qt::WA_DeleteOnClose);
 
     move(parent->x() + (parent->width() - sizeHint().width()) / 2,
       parent->y() + (parent->height() - sizeHint().height()) / 2);
@@ -135,9 +143,9 @@ void UpdateAvailableWindow::translateUI()
            "have version %3. "
            "Click \"Download\" to get the new version.")
             .arg(QCoreApplication::translate(Strings::STRINGS_CONTEXT,
-                                             Strings::PRODUCT_NAME))
-            .arg(QString::fromStdString(_versionNumber))
-            .arg(Utils::CURRENT_VERSION));
+                                             Strings::PRODUCT_NAME),
+                 QString::fromStdString(_versionNumber),
+                 Utils::CURRENT_VERSION));
     _noButton->setText(tr("Cancel"));
     _showMoreButton->setText(tr("Show Details"));
     _okButton->setText(tr("Download"));
@@ -199,7 +207,11 @@ void UpdateAvailableWindow::setStyle(bool use_dark)
                   "QPushButton { "
                   "   font-size: %2px; "
                   "   height: 16px; "
+                  "} "
+                  "QWidget#UpdateAvailableWindow { "
+                  "   background-color: palette(base);"
                   "} "};
+    setAttribute(Qt::WA_StyledBackground);
 #endif
     setStyleSheet(style.arg(std::to_string(bodyFontSizeHan).c_str(),
                             std::to_string(bodyFontSize).c_str()));

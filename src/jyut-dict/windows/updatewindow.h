@@ -3,15 +3,16 @@
 
 #include "logic/utils/utils.h"
 
-#include <QEvent>
-#include <QGridLayout>
-#include <QLabel>
-#include <QPushButton>
-#include <QSettings>
-#include <QTextEdit>
 #include <QWidget>
 
 #include <string>
+
+class QEvent;
+class QGridLayout;
+class QLabel;
+class QPushButton;
+class QSettings;
+class QTextEdit;
 
 // The Update Available Window displays an update notification to the user.
 
@@ -21,9 +22,10 @@ class UpdateAvailableWindow : public QWidget
 
 public:
     explicit UpdateAvailableWindow(QWidget *parent = nullptr,
-                          std::string versionNumber=Utils::CURRENT_VERSION,
-                          std::string url=Utils::GITHUB_LINK,
-                          std::string description="");
+                                   std::string versionNumber
+                                   = Utils::CURRENT_VERSION,
+                                   std::string url = Utils::GITHUB_LINK,
+                                   std::string description = "");
 
     void changeEvent(QEvent *event) override;
 
@@ -50,8 +52,6 @@ private:
     QGridLayout *_dialogLayout;
 
     std::unique_ptr<QSettings> _settings;
-
-signals:
 
 public slots:
     void showDetails();

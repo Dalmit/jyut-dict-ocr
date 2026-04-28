@@ -1,7 +1,7 @@
 #include "dictionarytab.h"
 
-#include "components/dictionarylist/dictionarylistview.h"
-#include "logic/dictionary/dictionarysource.h"
+#include "components/sourcelist/sourcelistview.h"
+#include "logic/source/sourceutils.h"
 #include "logic/settings/settingsutils.h"
 #include "logic/utils/utils.h"
 #ifdef Q_OS_MAC
@@ -24,12 +24,11 @@
 
 DictionaryTab::DictionaryTab(std::shared_ptr<SQLDatabaseManager> manager,
                              QWidget *parent)
-    : QWidget{parent},
-    _manager{manager}
+    : QWidget{parent}
+    , _manager{manager}
+    , _utils{new SQLDatabaseUtils}
 {
     setObjectName("DictionaryTab");
-
-    _utils = std::make_unique<SQLDatabaseUtils>(_manager);
 
     setupUI();
     translateUI();
@@ -56,7 +55,7 @@ void DictionaryTab::setupUI()
 #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
     _explanatory->setStyleSheet("QLabel { margin: 5px 0 5px 0; }");
 #endif
-    _list = new DictionaryListView{this};
+    _list = new SourceListView{this};
     _list->setFixedWidth(200);
     _add = new QPushButton{this};
     _findMore = new QPushButton{this};
@@ -102,7 +101,7 @@ void DictionaryTab::setupUI()
     connect(_list->selectionModel(),
             &QItemSelectionModel::currentChanged,
             this,
-            &DictionaryTab::setDictionaryMetadata);
+            &DictionaryTab::setSourceMetadata);
 
     connect(_add, &QPushButton::clicked, this, [=, this] {
         QFileDialog *_fileDialog = new QFileDialog{this};
@@ -167,11 +166,20 @@ void DictionaryTab::setStyle(bool use_dark) {
                              "   border-radius: 3px; "
                              "} ");
 #endif
+
+#ifdef Q_OS_WIN
+    QString colour = use_dark ? "#424242" : "#d5d5d5";
+    QString style = "QGroupBox { border: 1px solid %1; }";
+    QList<QGroupBox *> frames = this->findChildren<QGroupBox *>();
+    foreach (const auto &frame, frames) {
+        frame->setStyleSheet(style.arg(colour));
+    }
+#endif
 }
 
-void DictionaryTab::setDictionaryMetadata(const QModelIndex &index)
+void DictionaryTab::setSourceMetadata(const QModelIndex &index)
 {
-    DictionaryMetadata metadata = qvariant_cast<DictionaryMetadata>(
+    SourceMetadata metadata = qvariant_cast<SourceMetadata>(
         index.data());
     _description->setText(metadata.getDescription().c_str());
     _legal->setText(metadata.getLegal().c_str());
@@ -196,11 +204,11 @@ void DictionaryTab::clearDictionaryList()
 
 void DictionaryTab::populateDictionaryList()
 {
-    std::vector<DictionaryMetadata> sources;
-    _utils->readSources(sources);
+    std::vector<SourceMetadata> sources;
+    QSqlDatabase db = _manager->getDatabase();
+    _utils->readSources(db, sources);
 
-    for (std::vector<DictionaryMetadata>::size_type row = 0;
-         row < sources.size();
+    for (std::vector<SourceMetadata>::size_type row = 0; row < sources.size();
          row++) {
         _list->model()->setData(_list->model()->index(static_cast<int>(row), 0),
                                 QVariant::fromValue(sources.at(row)));
@@ -249,7 +257,7 @@ void DictionaryTab::addDictionary(const QString &dictionaryFile)
     connect(_utils.get(),
             &SQLDatabaseUtils::conflictingDictionaryNamesExist,
             this,
-            [=, this](conflictingDictionaryMetadata dictionaries) {
+            [=, this](conflictingSourceMetadata dictionaries) {
 #ifdef Q_OS_LINUX
                 // Without this delay, a ghost dialog pops up.
                 // I think it's because the _dialog has not yet had time to
@@ -281,10 +289,13 @@ void DictionaryTab::addDictionary(const QString &dictionaryFile)
                 }
             });
 
-    (void) QtConcurrent::run(&SQLDatabaseUtils::addSource,
-                             _utils.get(),
-                             dictionaryFile.toStdString(),
-                             /* overwriteConflictingDictionaries */ false);
+    std::ignore = QtConcurrent::run([this, dictionaryFile]() {
+        QSqlDatabase db = _manager->getDatabase();
+        _utils->addSource(db,
+                          dictionaryFile.toStdString(),
+                          _manager,
+                          /* overwriteConflictingDictionaries */ false);
+    });
 }
 
 void DictionaryTab::forceAddDictionary(const QString &dictionaryFile)
@@ -367,13 +378,16 @@ void DictionaryTab::forceAddDictionary(const QString &dictionaryFile)
                 }
             });
 
-    (void) QtConcurrent::run(&SQLDatabaseUtils::addSource,
-                             _utils.get(),
-                             dictionaryFile.toStdString(),
-                             /* overwriteConflictingDictionaries */ true);
+    std::ignore = QtConcurrent::run([this, dictionaryFile]() {
+        QSqlDatabase db = _manager->getDatabase();
+        _utils->addSource(db,
+                          dictionaryFile.toStdString(),
+                          _manager,
+                          /* overwriteConflictingDictionaries */ true);
+    });
 }
 
-void DictionaryTab::removeDictionary(DictionaryMetadata metadata)
+void DictionaryTab::removeDictionary(SourceMetadata metadata)
 {
     _dialog = new QProgressDialog{"", QString(), 0, 0, this};
     _dialog->setWindowModality(Qt::ApplicationModal);
@@ -435,9 +449,10 @@ void DictionaryTab::removeDictionary(DictionaryMetadata metadata)
                 _dialog->setLabelText(success ? tr("Done!") : tr("Failed!"));
                 if (success) {
                     std::vector<std::pair<std::string, std::string>> sources;
-                    _utils->readSources(sources);
+                    QSqlDatabase db = _manager->getDatabase();
+                    _utils->readSources(db, sources);
                     for (const auto &source : sources) {
-                        DictionarySourceUtils::addSource(source.first, source.second);
+                        SourceUtils::addSource(source.first, source.second);
                     }
                 }
 
@@ -449,18 +464,22 @@ void DictionaryTab::removeDictionary(DictionaryMetadata metadata)
                 });
             });
 
-    (void) QtConcurrent::run(&SQLDatabaseUtils::removeSource,
-                             _utils.get(),
+    (void) QtConcurrent::run([this, metadata]() {
+        QSqlDatabase db = _manager->getDatabase();
+        _utils->removeSource(db,
                              metadata.getName(),
+                             _manager,
                              /* skipCleanup */ false);
+    });
 }
 
 void DictionaryTab::populateDictionarySourceUtils() const
 {
     std::vector<std::pair<std::string, std::string>> sources;
-    _utils->readSources(sources);
+    QSqlDatabase db = _manager->getDatabase();
+    _utils->readSources(db, sources);
     for (const auto &source : sources) {
-        DictionarySourceUtils::addSource(source.first,
+        SourceUtils::addSource(source.first,
                                          source.second);
     }
 }

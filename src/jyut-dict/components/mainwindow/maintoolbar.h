@@ -1,27 +1,28 @@
 #ifndef MAINTOOLBAR_H
 #define MAINTOOLBAR_H
 
-#include "components/mainwindow/searchlineedit.h"
-#include "components/mainwindow/searchoptionsradiogroupbox.h"
 #include "logic/database/sqluserhistoryutils.h"
 #include "logic/search/isearchoptionsmediator.h"
-#include "logic/search/sqlsearch.h"
-#include "logic/utils/utils.h"
 
-#include <QAction>
-#include <QEvent>
-#include <QFocusEvent>
-#include <QGridLayout>
-#include <QMenu>
+#include <QSettings>
 #include <QToolBar>
-#include <QToolButton>
-#include <QWidget>
 
 #include <memory>
 
+class SearchLineEdit;
+class SearchOptionsRadioGroupBox;
+class SQLSearch;
+
+class QAction;
+class QEvent;
+class QFocusEvent;
+class QGridLayout;
+class QMenu;
+class QToolButton;
+class QWidget;
+
 // The MainToolBar is an object that contains all widgets in the toolbar
-// This includes the searchbar,
-// and any other radio buttons that change search parameters
+// This includes the searchbar, and buttons that launch various windows
 
 class MainToolBar : public QToolBar
 {
@@ -65,7 +66,7 @@ signals:
     void searchBarTextChange(void);
 
 public slots:
-    void forwardSearchHistoryItem(const searchTermHistoryItem &pair) const;
+    void forwardSearchHistoryItem(const SearchTermHistoryItem &pair) const;
     void searchQueryRequested(const QString &query,
                               const SearchParameters &parameters) const;
     void searchRequested(void) const;

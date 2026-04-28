@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0")
 
 find_package(QT NAMES Qt6 REQUIRED COMPONENTS
     LinguistTools
@@ -45,9 +45,6 @@ set(PROJECT_HEADERS
         components/definitioncard/definitioncontentwidget.h
         components/definitioncard/definitionheaderwidget.h
         components/definitioncard/icardheaderwidget.h
-        components/dictionarylist/dictionarylistdelegate.h
-        components/dictionarylist/dictionarylistmodel.h
-        components/dictionarylist/dictionarylistview.h
         components/entrysearchresult/resultlistdelegate.h
         components/entrysearchresult/resultlistmodel.h
         components/entrysearchresult/resultlistview.h
@@ -99,6 +96,10 @@ set(PROJECT_HEADERS
         components/settings/searchtab.h
         components/settings/settingstab.h
         components/settings/texttab.h
+        components/sourcelist/sourcelistdelegate.h
+        components/sourcelist/sourcelistmodel.h
+        components/sourcelist/sourcelistview.h
+        components/sourceupdatelist/sourceupdatemodel.h
         dialogs/defaultdialog.h
         dialogs/dictionarytabfailuredialog.h
         dialogs/downloadaudiodialog.h
@@ -107,6 +108,7 @@ set(PROJECT_HEADERS
         dialogs/exportdatabasedialog.h
         dialogs/handwritingerrordialog.h
         dialogs/noupdatedialog.h
+        dialogs/nosourceupdatesdialog.h
         dialogs/overwriteconflictingdictionarydialog.h
         dialogs/resetsettingsdialog.h
         dialogs/restoredatabasedialog.h
@@ -121,8 +123,6 @@ set(PROJECT_HEADERS
         logic/dictation/itranscriptionresultpublisher.h
         logic/dictation/itranscriptionresultsubscriber.h
         logic/dictation/transcriberwrapper.h
-        logic/dictionary/dictionarymetadata.h
-        logic/dictionary/dictionarysource.h
         logic/download/downloader.h
         logic/entry/definitionsset.h
         logic/entry/entry.h
@@ -138,7 +138,10 @@ set(PROJECT_HEADERS
         logic/sentence/sourcesentence.h
         logic/settings/settings.h
         logic/settings/settingsutils.h
+        logic/source/sourcemetadata.h
+        logic/source/sourceutils.h
         logic/update/jyutdictionaryreleasechecker.h
+        logic/update/sourcereleasechecker.h
         logic/utils/cantoneseutils.h
         logic/utils/chineseutils.h
         logic/utils/mandarinutils.h
@@ -162,6 +165,8 @@ set(PROJECT_HEADERS
         windows/historywindow.h
         windows/mainwindow.h
         windows/settingswindow.h
+        windows/sourceupdatewindow.h
+        windows/sourceupdateresultwindow.h
         windows/transcriptionwindow.h
         windows/updatewindow.h
         windows/welcomewindow.h
@@ -172,9 +177,6 @@ set(PROJECT_SOURCES
         components/definitioncard/definitioncardwidget.cpp
         components/definitioncard/definitioncontentwidget.cpp
         components/definitioncard/definitionheaderwidget.cpp
-        components/dictionarylist/dictionarylistdelegate.cpp
-        components/dictionarylist/dictionarylistmodel.cpp
-        components/dictionarylist/dictionarylistview.cpp
         components/entrysearchresult/resultlistdelegate.cpp
         components/entrysearchresult/resultlistmodel.cpp
         components/entrysearchresult/resultlistview.cpp
@@ -224,6 +226,10 @@ set(PROJECT_SOURCES
         components/settings/searchtab.cpp
         components/settings/settingstab.cpp
         components/settings/texttab.cpp
+        components/sourcelist/sourcelistdelegate.cpp
+        components/sourcelist/sourcelistmodel.cpp
+        components/sourcelist/sourcelistview.cpp
+        components/sourceupdatelist/sourceupdatemodel.cpp
         dialogs/defaultdialog.cpp
         dialogs/dictionarytabfailuredialog.cpp
         dialogs/downloadaudiodialog.cpp
@@ -232,6 +238,7 @@ set(PROJECT_SOURCES
         dialogs/exportdatabasedialog.cpp
         dialogs/handwritingerrordialog.cpp
         dialogs/noupdatedialog.cpp
+        dialogs/nosourceupdatesdialog.cpp
         dialogs/overwriteconflictingdictionarydialog.cpp
         dialogs/resetsettingsdialog.cpp
         dialogs/restoredatabasedialog.cpp
@@ -241,8 +248,6 @@ set(PROJECT_SOURCES
         logic/database/sqldatabaseutils.cpp
         logic/database/sqluserdatautils.cpp
         logic/database/sqluserhistoryutils.cpp
-        logic/dictionary/dictionarymetadata.cpp
-        logic/dictionary/dictionarysource.cpp
         logic/download/downloader.cpp
         logic/entry/definitionsset.cpp
         logic/entry/entry.cpp
@@ -254,7 +259,10 @@ set(PROJECT_SOURCES
         logic/sentence/sourcesentence.cpp
         logic/settings/settings.cpp
         logic/settings/settingsutils.cpp
+        logic/source/sourcemetadata.cpp
+        logic/source/sourceutils.cpp
         logic/update/jyutdictionaryreleasechecker.cpp
+        logic/update/sourcereleasechecker.cpp
         logic/utils/cantoneseutils.cpp
         logic/utils/chineseutils.cpp
         logic/utils/mandarinutils.cpp
@@ -276,6 +284,8 @@ set(PROJECT_SOURCES
         windows/historywindow.cpp
         windows/mainwindow.cpp
         windows/settingswindow.cpp
+        windows/sourceupdatewindow.cpp
+        windows/sourceupdateresultwindow.cpp
         windows/transcriptionwindow.cpp
         windows/updatewindow.cpp
         windows/welcomewindow.cpp

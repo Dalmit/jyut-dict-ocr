@@ -1,8 +1,12 @@
 #include "advancedtab.h"
 
+#include "dialogs/downloadaudiodialog.h"
+#include "dialogs/downloadresultdialog.h"
+#include "dialogs/exportdatabasedialog.h"
 #include "dialogs/resetsettingsdialog.h"
+#include "dialogs/restoredatabasedialog.h"
 #include "logic/database/sqldatabasemanager.h"
-#include "logic/entry/entryspeaker.h"
+#include "logic/download/downloader.h"
 #include "logic/settings/settingsutils.h"
 #include "logic/strings/strings.h"
 #ifdef Q_OS_MAC
@@ -17,10 +21,21 @@
 #include <KZip>
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QEvent>
 #include <QFileDialog>
+#include <QFormLayout>
 #include <QFrame>
+#include <QFutureWatcher>
+#include <QLabel>
 #include <QLibraryInfo>
+#include <QProgressDialog>
+#include <QPushButton>
+#include <QRadioButton>
+#include <QSettings>
 #include <QTimer>
+#include <QTranslator>
 #include <QtConcurrent/QtConcurrent>
 #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
 #include <QWindow>
@@ -81,6 +96,10 @@ void AdvancedTab::setupUI()
     _updateCheckbox = new QCheckBox{this};
     _updateCheckbox->setTristate(false);
     initializeUpdateCheckbox(*_updateCheckbox);
+
+    _sourceUpdateCheckbox = new QCheckBox{this};
+    _sourceUpdateCheckbox->setTristate(false);
+    initializeSourceUpdateCheckbox(*_sourceUpdateCheckbox);
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
     _forceDarkModeCheckbox = new QCheckBox{this};
@@ -186,6 +205,7 @@ void AdvancedTab::setupUI()
     initializeResetButton(*_resetButton);
 
     _tabLayout->addRow(" ", _updateCheckbox);
+    _tabLayout->addRow(" ", _sourceUpdateCheckbox);
 #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
     _tabLayout->addRow(" ", _forceDarkModeCheckbox);
 #endif
@@ -224,7 +244,9 @@ void AdvancedTab::translateUI()
     }
 
     static_cast<QLabel *>(_tabLayout->labelForField(_updateCheckbox))
-        ->setText(tr("Automatically check for updates on startup:"));
+        ->setText(tr("Automatically check for app updates on startup:"));
+    static_cast<QLabel *>(_tabLayout->labelForField(_sourceUpdateCheckbox))
+        ->setText(tr("Automatically check for dictionary updates on startup:"));
 #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
     static_cast<QLabel *>(_tabLayout->labelForField(_forceDarkModeCheckbox))
         ->setText(tr("Enable dark mode:"));
@@ -316,6 +338,17 @@ void AdvancedTab::initializeUpdateCheckbox(QCheckBox &checkbox)
     setUpdateCheckboxDefault(checkbox);
 }
 
+void AdvancedTab::initializeSourceUpdateCheckbox(QCheckBox &checkbox)
+{
+    connect(&checkbox, &QCheckBox::checkStateChanged, this, [&]() {
+        _settings->setValue("Advanced/sourceUpdateNotificationsEnabled",
+                            checkbox.checkState());
+        _settings->sync();
+    });
+
+    setSourceUpdateCheckboxDefault(checkbox);
+}
+
 #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
 void AdvancedTab::initializeForceDarkModeCheckbox(QCheckBox &checkbox)
 {
@@ -341,7 +374,7 @@ void AdvancedTab::initializeCantoneseTTSWidget(QWidget *widget)
     static_cast<QGridLayout *>(widget->layout())
         ->addWidget(_useCantoneseGoogleOfflineSyllableTTSBackend, 0, 1, 1, 1);
 
-    connect(_useCantoneseQtTTSBackend, &QRadioButton::clicked, this, [&]() {
+    connect(_useCantoneseQtTTSBackend, &QRadioButton::clicked, this, [&] {
         setCantoneseTTSSettings(TextToSpeech::SpeakerBackend::QT_TTS,
                                 TextToSpeech::SpeakerVoice::NONE);
     });
@@ -358,7 +391,7 @@ void AdvancedTab::initializeCantoneseTTSWidget(QWidget *widget)
     connect(_useCantoneseGoogleOfflineSyllableTTSBackend,
             &QRadioButton::clicked,
             this,
-            [&]() { startAudioDownload(_cantoneseTTSCallbacks); });
+            [&] { startAudioDownload(_cantoneseTTSCallbacks); });
 
     setCantoneseTTSWidgetDefault(widget);
 }
@@ -455,6 +488,14 @@ void AdvancedTab::setUpdateCheckboxDefault(QCheckBox &checkbox)
 {
     checkbox.setChecked(
         _settings->value("Advanced/updateNotificationsEnabled", QVariant{true})
+            .toBool());
+}
+
+void AdvancedTab::setSourceUpdateCheckboxDefault(QCheckBox &checkbox)
+{
+    checkbox.setChecked(
+        _settings
+            ->value("Advanced/sourceUpdateNotificationsEnabled", QVariant{true})
             .toBool());
 }
 
@@ -848,6 +889,15 @@ void AdvancedTab::startAudioDownload(std::shared_ptr<TextToSpeechCallbacks> cbs)
     if (!sender()) {
         return;
     }
+
+#ifdef Q_OS_LINUX
+    // On Linux, this prevents the first launch of the settings window from
+    // popping up the prompt to download audio files.
+    if (!_settings->contains(
+            "Advanced/CantoneseTextToSpeech::SpeakerBackend")) {
+        return;
+    }
+#endif
 
     auto backend
         = sender()->property("data").value<TextToSpeech::SpeakerBackend>();
