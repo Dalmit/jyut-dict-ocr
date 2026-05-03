@@ -35,7 +35,10 @@ Prefer to see only Traditional Chinese? Maybe hide Pinyin? Change the colours of
 
 <img src="/docs/screenshots/mac/settings.png?raw=true" style="margin: 5px">
 
-## Project structure
+### Added OCR Support
+Quick and Easy to use OCR integration.
+
+### Project structure
 
 The project contains two subdirectories under `src`: `dictionaries`, and `jyut-dict`.
 
